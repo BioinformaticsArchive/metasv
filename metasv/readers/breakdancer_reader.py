@@ -1,9 +1,17 @@
-from native_sv_reader import NativeSVRecord
+import logging
 import vcf
+from native_sv_reader import NativeSVRecord
+from sv_interval import SVInterval
+
+logger = logging.getLogger(__name__)
+logging.basicConfig()
 
 class BreakDancerRecord(NativeSVRecord):
+    name = "BreakDancer"
+    source = set(name)
+    valid_svs = set(["DEL", "INS", "INV"])
+
     def __init__(self, record_string):
-        self.name = breakdancer_name
         fields = record_string.split()
         self.chr1 = fields[0]
         self.pos1 = int(fields[1])
@@ -35,35 +43,25 @@ class BreakDancerRecord(NativeSVRecord):
         return "<" + self.__class__.__name__ + " " + str(self.__dict__) + ">"
 
     def to_sv_interval(self):
-        if self.sv_type not in valid_breakdancer_svs:
+        if self.sv_type not in self.valid_svs:
+            logger.error("Unsupported SV type %s" % self.sv_type)
             return None
 
-        if self.sv_type == "DEL" or self.sv_type == "INV":
-            return SVInterval(self.chr1,
-                              self.pos1 + 1,
-                              self.pos2,  # fudge
-                              name=self.name,
-                              sv_type=self.sv_type,
-                              length=self.sv_len,
-                              sources=breakdancer_source,
-                              cipos=[0, self.pos2 - self.pos1 - abs(self.sv_len)],
-                              info=self.info,
-                              native_sv=self)
-        elif self.sv_type == "INS":
-            return SVInterval(self.chr1,
-                              self.pos1 + 1,
-                              self.pos2,  # fudge
-                              name=self.name,
-                              sv_type=self.sv_type,
-                              length=self.sv_len,
-                              sources=breakdancer_source,
-                              cipos=[0, self.pos2 - self.pos1],
-                              info=self.info,
-                              native_sv=self)
-        else:
-            logger.error("Bad SV type: " + repr(self))
+        cipos = [0, self.pos2 - self.pos1]
+        if self.sv_type != "INS": cipos[1] -= abs(self.sv_len)
 
-    def to_vcf_record(self, sample):
+        return SVInterval(self.chr1,
+                          self.pos1 + 1,
+                          self.pos2,
+                          name=self.name,
+                          sv_type=self.sv_type,
+                          length=self.sv_len,
+                          sources=self.source,
+                          cipos=cipos,
+                          info=self.info,
+                          native_sv=self)
+
+    def to_vcf_record(self, sample=None):
         alt = ["<%s>" % self.sv_type]
         sv_len = -self.sv_len if self.sv_type == "DEL" else self.sv_len
         info = {"SVLEN": sv_len,
@@ -77,15 +75,17 @@ class BreakDancerRecord(NativeSVRecord):
 
         info.update(self.info)
 
-        vcf_record = vcf.model._Record(self.chr1,
-                                       self.pos1,
-                                       ".",
-                                       "N",
-                                       alt,
-                                       ".",
-                                       ".",
-                                       info,
-                                       "GT",
-                                       [0],
-                                       [vcf.model._Call(None, sample, vcf.model.make_calldata_tuple("GT")(GT="1/1"))])
-        return vcf_record
+        sample_indexes = [0] if sample else []
+        sample_calls = [vcf.model._Call(None, sample, vcf.model.make_calldata_tuple("GT")(GT="1/1"))] if sample else []
+        return vcf.model._Record(self.chr1,
+                                 self.pos1,
+                                 ".",
+                                 "N",
+                                 alt,
+                                 ".",
+                                 ".",
+                                 info,
+                                 "GT",
+                                 sample_indexes,
+                                 sample_calls)
+
